@@ -8,10 +8,18 @@ const api = {
   startDrag: () => ipcRenderer.invoke('window-drag'),
   transcribe: (buffer: ArrayBuffer) => ipcRenderer.invoke('transcribe', buffer),
   closeOverlay: () => ipcRenderer.send('close-overlay'),
+  openSettings: () => ipcRenderer.send('open-settings'),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
   onPTT: (callback: (status: 'START' | 'STOP') => void) => {
-    ipcRenderer.on('ptt-status-change', (_event, value) => callback(value));
-  }
+    const subscription = (_event: any, value: any) => callback(value);
+    ipcRenderer.on('ptt-status-change', subscription);
 
+    // Return the Unsubscribe function
+    return () => {
+      ipcRenderer.removeListener('ptt-status-change', subscription);
+    };
+  },
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

@@ -6,6 +6,9 @@ import { writeFile, unlink } from 'fs/promises'
 import os from 'os'
 import { execFile } from 'child_process' // Using native Process handling
 import { uIOhook, UiohookKey } from 'uiohook-napi'
+import axios from 'axios';
+import OpenAI from 'openai';
+import { setupSettingsHandlers, loadSettings, saveSettings } from './store'; // Import our store
 
 // --- IMPORTS FOR CONVERSION ---
 import ffmpeg from 'fluent-ffmpeg'
@@ -15,16 +18,23 @@ import ffmpegPath from 'ffmpeg-static'
 ffmpeg.setFfmpegPath(ffmpegPath.replace('app.asar', 'app.asar.unpacked'))
 
 let mainWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null; // New Reference
+
+
 keyboard.config.autoDelayMs = 0;
 
 function createWindow(): void {
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width, height } = primaryDisplay.workAreaSize;
 
+  const windowWidth = 140;
+  const windowHeight = 60;
+
+
   mainWindow = new BrowserWindow({
-    width: 140, // Small width
-    height: 60, // Small height
-    x: Math.round(width / 2 - 70), // Center X
+    width: windowWidth, // Small width
+    height: windowHeight, // Small height
+    x: Math.round(width / 2 - (windowWidth / 2)), // Center X
     y: Math.round(height - 80),    // Bottom Y (with padding)
     frame: false,       // No title bar
     transparent: true,  // See-through corners
@@ -32,6 +42,7 @@ function createWindow(): void {
     resizable: false,
     hasShadow: false,   // Cleaner look
     skipTaskbar: true,  // Don't show in dock
+    enableLargerThanScreen: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -45,6 +56,38 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+function createSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
+    return;
+  }
+
+  console.log("Opening Settings Window...");
+
+  settingsWindow = new BrowserWindow({
+    width: 500,
+    height: 800,
+    title: "WhisperFlow Configuration",
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  });
+
+  console.log("Settings Window Created.", process.env['ELECTRON_RENDERER_URL']);
+
+  // Load the renderer but add a hash to tell React to show Settings
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    settingsWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#settings`);
+    console.log("Loading Dev Settings URL:", `${process.env['ELECTRON_RENDERER_URL']}/#settings`);
+  } else {
+    settingsWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'settings' });
+    console.log("Loading Prod Settings File with Hash");
+  }
+}
+
 
 
 // -------------------------------------------------------------------
@@ -135,6 +178,56 @@ const runWhisperBin = async (wavPath: string): Promise<string> => {
   });
 }
 
+const refineText = async (rawText: string) => {
+  const config = loadSettings();
+
+  // If refinement disabled, return raw
+  if (!config.refinementEnabled) return rawText;
+
+  // Build the Instruction Prompt
+  let instructions = "You are a text correction assistant. Output ONLY the corrected text. Do not output any preamble.";
+  if (config.fixSpelling) instructions += " Fix all spelling errors.";
+  if (config.removeStutter) instructions += " Remove repeated words and filler words like 'um', 'ah'.";
+  if (config.completeSentences) instructions += " Remove sentences that abruptly stop.";
+  if (config.customPrompt) instructions += ` ${config.customPrompt}`;
+
+  console.log(`Refining via [${config.provider}]...`);
+
+  try {
+    // ---------------------------------
+    // STRATEGY A: OLLAMA (OFFLINE)
+    // ---------------------------------
+    if (config.provider === 'ollama') {
+      const response = await axios.post('http://127.0.0.1:11434/api/generate', {
+        model: config.ollamaModel || 'llama3.2',
+        prompt: `${instructions}\n\nInput Text: "${rawText}"\n\nCorrected Text:`,
+        stream: false
+      });
+      return response.data.response.trim();
+    }
+
+    // ---------------------------------
+    // STRATEGY B: OPENAI (CLOUD)
+    // ---------------------------------
+    else {
+      if (!config.llmApiKey) return rawText;
+      const openai = new OpenAI({ apiKey: config.llmApiKey, dangerouslyAllowBrowser: true });
+      const completion = await openai.chat.completions.create({
+        messages: [
+          { role: "system", content: instructions },
+          { role: "user", content: rawText }
+        ],
+        model: "gpt-4o-mini",
+      });
+      return completion.choices[0].message.content || rawText;
+    }
+  } catch (err) {
+    console.error("Refinement Error:", err);
+    return rawText; // Fallback to raw text if AI fails
+  }
+};
+
+
 async function insertTextAtCursor(text: string) {
   if (!text) return;
   console.log("Typing:", text);
@@ -161,8 +254,14 @@ async function insertTextAtCursor(text: string) {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.electron')
+  setupSettingsHandlers();
   createWindow()
   setupHooks();
+
+  ipcMain.on('open-settings', () => {
+    createSettingsWindow();
+  });
+
 })
 
 app.on('will-quit', () => {
@@ -183,7 +282,8 @@ ipcMain.handle('transcribe', async (_event, audioBuffer: ArrayBuffer) => {
     // 3. Exec Binary
     const rawText = await runWhisperBin(wavPath);
 
-    console.log("FINAL TEXT:", rawText);
+    const finalText = await refineText(rawText);
+    console.log("Refined Text:", finalText);
 
     if (rawText.trim().length > 0) {
       await insertTextAtCursor(rawText);
