@@ -1,43 +1,47 @@
-appId: com.electron.app
-productName: whisper-flow
+appId: com.whisperflow.app
+productName: WhisperFlow
 directories:
   buildResources: build
+  output: dist
+
 files:
   - '!**/.vscode/*'
   - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!electron.vite.config.ts'
+  # FIX IS HERE: Use literal folder name 'build' instead of variable
+  - '!build/*' 
+  # Exclude raw resources (we add them via extraResources)
+  - '!resources/*'
+
+# Unpack native modules so the OS can read the C++ binary files
 asarUnpack:
-  - resources/**
-win:
-  executableName: whisper-flow
-nsis:
-  artifactName: ${name}-${version}-setup.${ext}
-  shortcutName: ${productName}
-  uninstallDisplayName: ${productName}
-  createDesktopShortcut: always
+  - "node_modules/uiohook-napi"
+  - "node_modules/simple-uiohook"
+
+# Bundle our local binaries (Ollama, Whisper)
+extraResources:
+  - from: resources
+    to: .
+    filter:
+      - "**/*"
+
 mac:
-  entitlementsInherit: build/entitlements.mac.plist
+  target: dmg
+  icon: build/icon.icns 
+  # MacOS permissions prompts
+  identity: null
   extendInfo:
-    - NSCameraUsageDescription: Application requests access to the device's camera.
-    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
-  notarize: false
+    NSMicrophoneUsageDescription: "WhisperFlow needs microphone access to transcribe your speech."
+    NSAccessibilityUsageDescription: "WhisperFlow needs accessibility access to detect your Push-to-Talk keypress and paste text."
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
 dmg:
   artifactName: ${name}-${version}.${ext}
-linux:
-  target:
-    - AppImage
-    - snap
-    - deb
-  maintainer: electronjs.org
-  category: Utility
-appImage:
-  artifactName: ${name}-${version}.${ext}
-npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications

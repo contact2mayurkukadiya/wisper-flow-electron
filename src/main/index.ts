@@ -8,7 +8,7 @@ import { execFile } from 'child_process' // Using native Process handling
 import { uIOhook, UiohookKey } from 'uiohook-napi'
 import axios from 'axios';
 import OpenAI from 'openai';
-import { setupSettingsHandlers, loadSettings, saveSettings } from './store'; // Import our store
+import { setupSettingsHandlers, loadSettings } from './store'; // Import our store
 
 // --- IMPORTS FOR CONVERSION ---
 import ffmpeg from 'fluent-ffmpeg'
